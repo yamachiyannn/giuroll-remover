@@ -70,7 +70,7 @@ fn flush_code(address: usize, length: usize) {
     unsafe {
         let _ = FlushInstructionCache(
             GetCurrentProcessWin(),
-            address as *const _,
+            Some(address as *const _),
             length,
         );
     }
@@ -187,14 +187,15 @@ impl MemoryPatch {
         }
 
         let mut old_protection = PAGE_PROTECTION_FLAGS(0);
-        if VirtualProtect(
-            self.address as *const _,
-            self.original.len(),
-            PAGE_EXECUTE_READWRITE,
-            &mut old_protection,
-        )
-        .is_err()
-        {
+        let protect_result = unsafe {
+            VirtualProtect(
+                self.address as *const _,
+                self.original.len(),
+                PAGE_EXECUTE_READWRITE,
+                &mut old_protection,
+            )
+        };
+        if protect_result.is_err() {
             return false;
         }
 
@@ -210,14 +211,15 @@ impl MemoryPatch {
         }
 
         let mut ignored_protection = PAGE_PROTECTION_FLAGS(0);
-        if VirtualProtect(
-            self.address as *const _,
-            self.original.len(),
-            old_protection,
-            &mut ignored_protection,
-        )
-        .is_err()
-        {
+        let restore_protection_result = unsafe {
+            VirtualProtect(
+                self.address as *const _,
+                self.original.len(),
+                old_protection,
+                &mut ignored_protection,
+            )
+        };
+        if restore_protection_result.is_err() {
             return false;
         }
 
