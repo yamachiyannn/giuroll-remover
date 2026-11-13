@@ -1,0 +1,32 @@
+[package]
+name = "giuroll-remover-tool"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "In-process Giuroll hook restoration tool for Hisoutensoku"
+
+[lib]
+name = "giuroll_remover"
+path = "src/dll.rs"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "giuroll-r-loader"
+path = "src/main.rs"
+
+[dependencies]
+winapi = { version = "0.3.9", features = [
+    "minwindef",
+    "minwinbase",
+    "winnt",
+    "libloaderapi",
+    "processthreadsapi",
+    "memoryapi",
+    "errhandlingapi",
+    "handleapi",
+    "tlhelp32",
+    "synchapi",
+    "winbase",
+    "winerror",
+    "winuser"
+] }
