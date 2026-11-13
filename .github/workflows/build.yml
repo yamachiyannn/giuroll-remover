@@ -1,0 +1,71 @@
+name: Build Giuroll + Remover
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_BUILD_TARGET: i686-win7-windows-msvc
+  PROFILE: release
+  RUSTFLAGS: "-Clink-arg=/BREPRO -Ctarget-feature=+crt-static -Zremap-cwd-prefix=. -Clink-arg=/PDBALTPATH:%_PDB%"
+  CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+  CARGO_PROFILE_RELEASE_DEBUG: true
+  CARGO_PROFILE_RELEASE_STRIP: none
+
+jobs:
+  build:
+    name: Build 32-bit Windows binaries
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC environment (x86)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Install pinned Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-18
+          components: rust-src
+
+      - name: Build modified giuroll.dll
+        shell: pwsh
+        run: |
+          $commit = git rev-parse --short HEAD
+          $env:SOURCE_URL = "${{ github.server_url }}/${{ github.repository }}/tree/$commit"
+          "SOURCE_URL=$env:SOURCE_URL" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          cargo build --target $env:CARGO_BUILD_TARGET --profile $env:PROFILE -Z build-std
+
+      - name: Build giuroll-remover.dll and giuroll-r-loader.exe
+        shell: pwsh
+        run: |
+          cargo build --manifest-path remover/Cargo.toml --target $env:CARGO_BUILD_TARGET --profile $env:PROFILE -Z build-std
+
+      - name: Assemble bundle
+        shell: pwsh
+        run: |
+          $out = "_pack\giuroll-remover"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "target\$env:CARGO_BUILD_TARGET\$env:PROFILE\giuroll.dll" "$out\giuroll.dll"
+          Copy-Item "remover\target\$env:CARGO_BUILD_TARGET\$env:PROFILE\giuroll_remover.dll" "$out\giuroll-remover.dll"
+          Copy-Item "remover\target\$env:CARGO_BUILD_TARGET\$env:PROFILE\giuroll-r-loader.exe" "$out\giuroll-r-loader.exe"
+          Copy-Item "giuroll.ini" "$out\giuroll.ini"
+          Copy-Item "README-remover.md" "$out\README.txt"
+          Copy-Item "LICENSE" "$out\LICENSE-Giuroll.txt"
+          Copy-Item "remover\LICENSE" "$out\LICENSE-Remover.txt"
+          Compress-Archive -Path "$out\*" -DestinationPath "_pack\giuroll-remover.zip" -Force
+
+      - name: Upload build bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: giuroll-0.6.17-4-hagb-with-remover
+          path: |
+            _pack/giuroll-remover.zip
+            _pack/giuroll-remover/*
+          if-no-files-found: error
+          compression-level: 0
