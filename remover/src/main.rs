@@ -254,11 +254,11 @@ fn inject_dll(pid: DWORD, dll_path: &PathBuf) -> Result<(), String> {
 
         let load_library_name = b"LoadLibraryW\0";
         let load_library = GetProcAddress(kernel32, load_library_name.as_ptr() as *const i8);
-        let Some(load_library) = load_library else {
+        if load_library.is_null() {
             let error = GetLastError();
             VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
             return Err(format!("LoadLibraryW を取得できません (Win32 error {error})"));
-        };
+        }
 
         // Use the function's actual owning module and RVA. Forwarded exports
         // can point outside kernel32.dll, and ASLR means the local absolute

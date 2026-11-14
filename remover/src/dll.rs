@@ -109,10 +109,10 @@ unsafe extern "system" fn remover_worker(parameter: LPVOID) -> DWORD {
 
     let function_name = CString::new("Giuroll_Disable").unwrap();
     let function = GetProcAddress(giuroll_module, function_name.as_ptr());
-    let Some(function) = function else {
+    if function.is_null() {
         show_result(STATUS_NOT_ACTIVE);
         exit_worker(self_module, 0);
-    };
+    }
 
     let disable: unsafe extern "C" fn() -> u32 = transmute(function);
     let status = disable();
