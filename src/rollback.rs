@@ -308,6 +308,16 @@ impl RollFrame {
 static mut FPST: [u8; 108] = [0u8; 108];
 pub static mut DUMP_FRAME_TIME: Option<Duration> = None;
 pub static mut MEMORY_LEAK: usize = 0;
+
+/// Reset counters and character-size overrides for a fresh activation.
+pub unsafe fn reset_runtime_state() {
+    CHARSIZEDATA.clear();
+    LAST_M_LEN = 0;
+    DUMP_FRAME_TIME = None;
+    MEMORY_LEAK = 0;
+    FPST = [0; 108];
+}
+
 pub unsafe fn dump_frame(
     extra_allocs: Option<impl Iterator<Item = usize>>,
     extra_frees: Option<impl Iterator<Item = usize>>,

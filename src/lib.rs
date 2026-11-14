@@ -48,7 +48,10 @@ use rollback::{Rollbacker, DUMP_FRAME_TIME, LAST_M_LEN, MEMORY_LEAK};
 use sound::RollbackSoundManager;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use windows::Win32::System::LibraryLoader::{
+    GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+    GET_MODULE_HANDLE_EX_FLAG_PIN,
+};
 use windows::Win32::System::Memory::HEAP_FLAGS;
 use windows::Win32::{
     Foundation::{GetLastError, HMODULE, HWND},
@@ -207,23 +210,62 @@ fn initialize(dllmodule: HMODULE, pretend_to_be_vanilla: bool) -> bool {
     let mut filepath = Path::new(&s).to_owned();
     filepath.pop();
 
-    static GR_LOADED: Mutex<bool> = Mutex::new(false);
-    let mut lock = GR_LOADED.lock().unwrap();
-
-    if *lock {
+    // A disabled Giuroll DLL intentionally remains mapped so that no
+    // in-flight callback can jump into unloaded code. Permit a new activation
+    // generation only after the previous generation was fully restored.
+    let previous_state = LIFECYCLE.load(std::sync::atomic::Ordering::Acquire);
+    if previous_state != LIFECYCLE_NOT_INITIALIZED && previous_state != LIFECYCLE_DISABLED {
         warning_box(
-            "This giuroll had been initialized! Please don't initialize it again!",
+            "Giuroll is already active, initializing, or in a failed state. Restart the game if it could not be safely disabled.",
             "Failed to initialize Giuroll",
         );
         return false;
     }
+    if LIFECYCLE.compare_exchange(
+        previous_state,
+        LIFECYCLE_INITIALIZING,
+        std::sync::atomic::Ordering::AcqRel,
+        std::sync::atomic::Ordering::Acquire,
+    ).is_err() {
+        warning_box("Giuroll is already being initialized.", "Failed to initialize Giuroll");
+        return false;
+    }
+
+    // Keep the Giuroll module mapped for the entire game process. Its hook
+    // trampolines are intentionally resident after disable, and a later
+    // Initialize call reuses this exact module rather than loading a second
+    // copy with independent static state.
+    if !MODULE_PINNED.load(std::sync::atomic::Ordering::Acquire) {
+        let mut pinned_module = HMODULE::default();
+        let pin_result = unsafe {
+            GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                PCWSTR::from_raw(dllmodule.0 as *const u16),
+                &mut pinned_module,
+            )
+        };
+        if pin_result.is_err() {
+            LIFECYCLE.store(previous_state, std::sync::atomic::Ordering::Release);
+            warning_box(
+                "Giuroll DLLを安全に常駐化できませんでした。フックの安全性を確保できないため初期化を中止します。",
+                "Failed to initialize Giuroll",
+            );
+            return false;
+        }
+        MODULE_PINNED.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    if previous_state == LIFECYCLE_DISABLED {
+        unsafe { reset_runtime_state_for_reinitialization(); }
+    }
+
     match truer_exec(filepath, pretend_to_be_vanilla) {
         Ok(_) => {
-            *lock = true;
             LIFECYCLE.store(LIFECYCLE_ACTIVE, std::sync::atomic::Ordering::Release);
             true
         }
         Err(e) => {
+            LIFECYCLE.store(previous_state, std::sync::atomic::Ordering::Release);
             warning_box(format!("{}", e).as_str(), "Failed to initialize Giuroll");
             false
         }
@@ -254,6 +296,102 @@ static SOKU_LOOP_EVENT: Mutex<Option<isize>> = Mutex::new(None);
 static TARGET_OFFSET: AtomicI32 = AtomicI32::new(0);
 //static TARGET_OFFSET_COUNT: AtomicI32 = AtomicI32::new(0);
 
+/// Clear generation-local state after a successful disable and before the
+/// same resident DLL is initialized again. The game must be idle and all
+/// Giuroll hooks must already have been restored.
+unsafe fn reset_runtime_state_for_reinitialization() {
+    replay::reset_runtime_state();
+    rollback::reset_runtime_state();
+
+    REAL_INPUT = None;
+    REAL_INPUT2 = None;
+    UPDATE = None;
+    TARGET = None;
+    WARNING_FRAME_MISSING_1_COUNTDOWN = 0;
+    WARNING_FRAME_MISSING_2_COUNTDOWN = 0;
+    WARNING_FRAME_LOST_COUNTDOWN.store(0, std::sync::atomic::Ordering::Release);
+    if let Ok(mut event) = SOKU_LOOP_EVENT.lock() {
+        *event = None;
+    }
+    TARGET_OFFSET.store(0, std::sync::atomic::Ordering::Release);
+
+    SOUND_MANAGER = None;
+    FORCE_SOUND_SKIP = false;
+    DISABLE_SOUND = false;
+    ENABLE_PRINTLN = false;
+    SPIN_TIME_MICROSECOND = 0;
+    F62_ENABLED = false;
+    LAST_GAME_REQUEST = None;
+    LAST_LOAD_ACK = None;
+    LAST_MATCH_ACK = None;
+    LAST_MATCH_LOAD = None;
+    IS_FIRST_READ_INPUTS = true;
+    ORI_RECVFROM = None;
+
+    FAKE_BATTLE_MANAGER_FOR_TSK = None;
+    CAMERA_ACTUAL_SMOOTH_TRANSFORM = None;
+    LAST_IDEAL_CAMERA = None;
+    LAST_CAMERA_BEFORE_SMOOTH = None;
+    SMOOTH = false;
+    SMOOTH_INCREASING_SCALE_CORRECTION = None;
+    SMOOTH_DECREASING_SCALE_CORRECTION = None;
+    SMOOTH_X_CORRECTION = None;
+    SMOOTH_Y_CORRECTION = None;
+    LAST_SMOOTHED_FRAMECOUNT = 0;
+
+    REQUESTED_THREAD_ID.store(0, std::sync::atomic::Ordering::Release);
+    NEXT_DRAW_PING = None;
+    NEXT_DRAW_ROLLBACK = None;
+    NEXT_DRAW_ENEMY_DELAY = None;
+    _NEXT_DRAW_PACKET_LOSS = None;
+    _NEXT_DRAW_PACKET_DESYNC = None;
+    #[cfg(feature = "fillfree")]
+    { HEAP_FREE_RNG = None; }
+    LIKELY_DESYNCED = false;
+    ORI_HEAP_REALLOC = None;
+    LAST_STATE.store(0x6b, std::sync::atomic::Ordering::Release);
+    HAS_LOADED = false;
+    AFTER_GAME_REQUEST_FROM_P1 = false;
+    if let Ok(mut data) = SELECT_SCENE_INPUT_SEND_TIME_DATA.lock() {
+        *data = None;
+    }
+    GIRLSTALKED = false;
+    DISABLE_SEND.store(0, std::sync::atomic::Ordering::Release);
+
+    ROLLBACKER = None;
+    NETCODER = None;
+    DATA_SENDER = None;
+    DATA_RECEIVER = None;
+    MEMORY_SENDER_FREE = None;
+    MEMORY_RECEIVER_FREE = None;
+    MEMORY_SENDER_ALLOC = None;
+    MEMORY_RECEIVER_ALLOC = None;
+
+    LAST_DELAY_VALUE = 0;
+    DEFAULT_DELAY_VALUE = 0;
+    LAST_DELAY_VALUE_TAKEOVER = 0;
+    AUTODELAY_ENABLED = false;
+    AUTODELAY_ROLLBACK = 0;
+    LAST_DELAY_MANIP = 0;
+    BATTLE_STARTED = false;
+    ESC = 0;
+    GIRLS_ARE_TALKING = false;
+    ESC2.store(0, std::sync::atomic::Ordering::Release);
+    INCREASE_DELAY_KEY = 0;
+    DECREASE_DELAY_KEY = 0;
+    INCREASE_MAX_ROLLBACK_KEY = 0;
+    DECREASE_MAX_ROLLBACK_KEY = 0;
+    TOGGLE_STAT_KEY = 0;
+    TAKEOVER_KEYS_SCHEME = [0; 4];
+    TOGGLE_STAT = false;
+    LAST_TOGGLE = false;
+
+    TITLE_WORKER_DONE.store(false, std::sync::atomic::Ordering::Release);
+    if let Ok(mut title) = ORIGINAL_WINDOW_TITLE.lock() {
+        *title = None;
+    }
+}
+
 const VER: &str = env!("CARGO_PKG_VERSION");
 
 const LIFECYCLE_NOT_INITIALIZED: u32 = 0;
@@ -261,7 +399,9 @@ const LIFECYCLE_ACTIVE: u32 = 1;
 const LIFECYCLE_DISABLING: u32 = 2;
 const LIFECYCLE_DISABLED: u32 = 3;
 const LIFECYCLE_FAILED: u32 = 4;
+const LIFECYCLE_INITIALIZING: u32 = 5;
 static LIFECYCLE: AtomicU32 = AtomicU32::new(LIFECYCLE_NOT_INITIALIZED);
+static MODULE_PINNED: AtomicBool = AtomicBool::new(false);
 static TITLE_WORKER_DONE: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_WINDOW_TITLE: Mutex<Option<(usize, Vec<u16>)>> = Mutex::new(None);
 
@@ -2079,6 +2219,10 @@ fn disable_giuroll_inner() -> u32 {
     match result {
         Ok(()) => {
             restore_original_window_title();
+            // All game threads have resumed and all game-side patches are
+            // restored. Clear generation-local state so Initialize can safely
+            // build a fresh Giuroll generation later in this same DLL.
+            unsafe { reset_runtime_state_for_reinitialization(); }
             LIFECYCLE.store(LIFECYCLE_DISABLED, std::sync::atomic::Ordering::Release);
             disable::DISABLE_OK
         }

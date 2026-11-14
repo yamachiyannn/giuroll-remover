@@ -532,10 +532,13 @@ pub fn restore_all_changes(is_idle: unsafe fn() -> bool) -> Result<(), u32> {
         }
     }
 
-    // Keep metadata in the registry until process exit. Dropping the hook
-    // records here would free their bookkeeping while other threads are still
-    // suspended; retaining it is cheap and avoids allocator activity in the
-    // critical section. Every hook's trampoline itself was already leaked.
+    // The hook trampolines themselves were deliberately leaked by
+    // HookPoint::unhook_in_place, so they remain valid for any thread that was
+    // already returning through one. Once every game thread has resumed, the
+    // bookkeeping can be discarded. This is essential for a later enable
+    // cycle: keeping the old generation would make preflight mistake the
+    // previous, already-restored patch for a foreign modification.
     drop(suspended);
+    changes.clear();
     Ok(())
 }

@@ -11,7 +11,7 @@ use winapi::{
         },
         processthreadsapi::CreateThread,
         winnt::DLL_PROCESS_ATTACH,
-        winuser::{MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK},
+        winuser::{MessageBoxW, MB_ICONERROR, MB_OK},
     },
 };
 
@@ -27,66 +27,38 @@ fn wide(text: &str) -> Vec<u16> {
 }
 
 unsafe fn show_result(status: u32) {
-    let (title, body, icon) = match status {
-        STATUS_OK => (
-            "Giuroll Remover - 完了",
-            concat!(
-                "Giurollが設置したゲーム側フックと記録済みメモリ変更を復元しました。\n\n",
-                "DLL本体とトランポリンは安全のためプロセス内に残しています。\n",
-                "通常版の天則処理へ戻すための解除が完了しました。\n",
-                "オンライン接続の互換性は、実際の対戦で確認してください。"
-            ),
-            MB_ICONINFORMATION,
-        ),
+    // Successful disable is intentionally silent. Only failures need user
+    // attention; no success text or compatibility claim is displayed.
+    if status == STATUS_OK {
+        return;
+    }
+
+    let (title, body) = match status {
         STATUS_NOT_ACTIVE => (
             "Giuroll Remover - 対象なし",
             "Giurollが初期化されていないか、すでに無効化されています。",
-            MB_ICONERROR,
         ),
         STATUS_UNSAFE_GAME_STATE => (
             "Giuroll Remover - 実行できません",
-            concat!(
-                "対戦中、または安全に解除できるメニュー状態ではありません。\n\n",
-                "対戦を終了してタイトル／メニューに戻ってから実行してください。"
-            ),
-            MB_ICONERROR,
+            "対戦中、または安全に解除できるメニュー状態ではありません。対戦を終了してタイトル／メニューに戻ってから実行してください。",
         ),
         STATUS_THREAD_BUSY => (
             "Giuroll Remover - 再試行してください",
-            concat!(
-                "ゲームのスレッドを安全に停止できなかったか、復元対象のゲームコードを実行中です。\n\n",
-                "しばらく待って、メニュー画面で再実行してください。"
-            ),
-            MB_ICONERROR,
+            "ゲームのスレッドを安全に停止できなかったか、復元対象のゲームコードを実行中です。しばらく待って、メニュー画面で再実行してください。",
         ),
         STATUS_FOREIGN_PATCH => (
             "Giuroll Remover - 競合を検出",
-            concat!(
-                "Giurollが変更した箇所を別のMODも変更しています。\n",
-                "他のMODを上書きしないため、復元を中止しました。\n\n",
-                "安全に解除できません。天則を終了して再起動してください。"
-            ),
-            MB_ICONERROR,
+            "Giurollが変更した箇所を別のMODも変更しています。他のMODを上書きしないため復元を中止しました。天則を終了して再起動してください。",
         ),
         _ => (
             "Giuroll Remover - 復元失敗",
-            concat!(
-                "復元処理中にエラーが発生しました。\n\n",
-                "状態が一部変更されている可能性があります。\n",
-                "天則を終了して再起動してください。"
-            ),
-            MB_ICONERROR,
+            "復元処理中にエラーが発生しました。状態が一部変更されている可能性があります。天則を終了して再起動してください。",
         ),
     };
 
     let title_w = wide(title);
     let body_w = wide(body);
-    MessageBoxW(
-        null_mut(),
-        body_w.as_ptr(),
-        title_w.as_ptr(),
-        MB_OK | icon,
-    );
+    MessageBoxW(null_mut(), body_w.as_ptr(), title_w.as_ptr(), MB_OK | MB_ICONERROR);
 }
 
 // FreeLibraryAndExitThread is documented not to return. The winapi 0.3

@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 #![allow(non_snake_case)]
 
 use std::{
@@ -25,6 +26,7 @@ use winapi::{
             TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS,
         },
         winbase::INFINITE,
+        winuser::{MessageBoxW, MB_ICONERROR, MB_OK},
         winnt::{
             MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, PROCESS_CREATE_THREAD,
             PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
@@ -338,20 +340,15 @@ fn run() -> Result<(), String> {
     }
 
     inject_dll(pid, &dll_path)?;
-    println!("リムーバーを th123.exe (PID {pid}) にロードしました。");
-    println!("解除結果はゲーム内に表示されるメッセージを確認してください。");
     Ok(())
 }
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("エラー: {error}");
-        eprintln!("何かキーを押すと終了します。");
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        std::process::exit(1);
+        let title: Vec<u16> = "Giuroll Remover - エラー".encode_utf16().chain(Some(0)).collect();
+        let body: Vec<u16> = error.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            MessageBoxW(null_mut(), body.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
+        }
     }
-    println!("何かキーを押すと終了します。");
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
 }

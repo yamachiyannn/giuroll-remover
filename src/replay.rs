@@ -242,6 +242,20 @@ pub unsafe fn clean_replay_statics() {
     PERFORMANCE_TEST = None
 }
 
+/// Reset replay-only state before a new Giuroll activation generation.
+/// Called only after all Giuroll hooks have been removed and the game is idle.
+pub unsafe fn reset_runtime_state() {
+    clean_replay_statics();
+    RE_PLAY_PAUSE = 0;
+    PAUSESTATE.store(0, Relaxed);
+    IS_REWINDING.store(0, Relaxed);
+    REWIND_PRESSED_LAST_FRAME = false;
+    REPLAY_KO_FRAMECOUNT = None;
+    LAST_TARGET = None;
+    CHECK = None;
+    PERFORMANCE_TEST = None;
+}
+
 unsafe fn set_keys_availability_in_takeover(enable: bool) {
     for n in 0..=1 {
         let input_manager = *((0x00898680 as *const *mut u32).offset(n));
