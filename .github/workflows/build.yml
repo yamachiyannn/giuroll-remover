@@ -55,7 +55,6 @@ jobs:
           Copy-Item "remover\target\$env:CARGO_BUILD_TARGET\$env:PROFILE\giuroll_remover.dll" "$out\giuroll-remover.dll"
           Copy-Item "remover\target\$env:CARGO_BUILD_TARGET\$env:PROFILE\giuroll-r-loader.exe" "$out\giuroll-r-loader.exe"
           Copy-Item "giuroll.ini" "$out\giuroll.ini"
-          Copy-Item "README-remover.md" "$out\README.txt"
           Copy-Item "LICENSE" "$out\LICENSE-Giuroll.txt"
           Copy-Item "remover\LICENSE" "$out\LICENSE-Remover.txt"
           Compress-Archive -Path "$out\*" -DestinationPath "_pack\giuroll-remover.zip" -Force
