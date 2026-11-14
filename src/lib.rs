@@ -3,6 +3,7 @@
 #![feature(let_chains)]
 #![feature(coroutines)]
 #![feature(iter_from_coroutine)]
+#![feature(stmt_expr_attributes)]
 #![feature(anonymous_lifetime_in_impl_trait)]
 #![feature(panic_update_hook)]
 #![feature(panic_info_message)]
